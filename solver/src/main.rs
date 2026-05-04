@@ -37,7 +37,7 @@ fn load_range_from_file(path: &str) -> Result<String, Box<dyn std::error::Error>
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Poker Solver v1.0 ===");
     println!("Scenario: BTN RFI vs BB call");
-    println!("Board: KhQs6h 9d 3c (locked runout for v1.0)");
+    println!("Board: KhQs6h (full tree - all turns/rivers for v1.1)");
     println!();
 
     // Load ranges
@@ -50,9 +50,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Card configuration
-    // Lock turn and river to specific cards to reduce tree size for v1.0
-    // Turn: 9d (blank, completes no straights/flushes)
-    // River: 3c (blank)
+    // v1.1: Full tree with all possible turns and rivers (NOT_DEALT)
+    // This validates the full solving pipeline before scaling to 184 flops
     println!("Configuring game...");
     let card_config = CardConfig {
         range: [
@@ -60,8 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ip_range.parse()?,   // BTN is IP (in position)
         ],
         flop: flop_from_str("KhQs6h")?,
-        turn: card_from_str("9d")?,
-        river: card_from_str("3c")?,
+        turn: NOT_DEALT,
+        river: NOT_DEALT,
     };
 
     // Bet sizes configuration
@@ -79,9 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Starting pot: 5.5bb (SB 0.5bb + BB 2.5bb + BTN 2.5bb)
     // Effective stack: 97.5bb
     // At $0.50/$1: starting_pot = $5.50, effective_stack = $97.50
-    // Note: We lock turn/river cards for v1.0 to reduce memory requirements
+    // v1.1: Full tree (turn/river NOT_DEALT) so we start from Flop state
     let tree_config = TreeConfig {
-        initial_state: BoardState::River,  // Changed to River since we specify all cards
+        initial_state: BoardState::Flop,  // Flop state since turn/river are NOT_DEALT
         starting_pot: 550,      // $5.50 in cents
         effective_stack: 9750,  // $97.50 in cents
         rake_rate: 0.05,        // 5% ($0.01 per $0.20)
