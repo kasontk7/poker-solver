@@ -1,6 +1,16 @@
-# AWS Setup for v1.1
+# AWS Setup Documentation
 
-## Prerequisites (One-Time Setup)
+## Quick Start
+
+**For launching EC2 and running solves:** See [`LAUNCH.md`](LAUNCH.md)
+
+**For one-time AWS prerequisites:** Continue reading below.
+
+---
+
+## One-Time AWS Prerequisites
+
+These steps only need to be done once per AWS account.
 
 ### 1. Create IAM Role for EC2
 
@@ -52,14 +62,25 @@ SG_ID=$(aws ec2 create-security-group \
   --query 'GroupId' \
   --output text)
 
-# Allow SSH from your IP
-MY_IP=$(curl -s ifconfig.me)
+# Allow SSH from your IP (IPv4)
+MY_IP=$(curl -4 -s ifconfig.me)
 aws ec2 authorize-security-group-ingress \
   --group-id $SG_ID \
   --protocol tcp \
   --port 22 \
   --cidr ${MY_IP}/32 \
   --profile poker
+
+# Also allow IPv6 if needed
+MY_IP_V6=$(curl -6 -s ifconfig.me 2>/dev/null || echo "")
+if [ -n "$MY_IP_V6" ]; then
+  aws ec2 authorize-security-group-ingress \
+    --group-id $SG_ID \
+    --ip-permissions IpProtocol=tcp,FromPort=22,ToPort=22,Ipv6Ranges="[{CidrIpv6=${MY_IP_V6}/128,Description='My IP'}]" \
+    --profile poker
+fi
+
+echo "Security group created: $SG_ID"
 ```
 
 ### 3. Create Key Pair
@@ -72,148 +93,85 @@ aws ec2 create-key-pair \
   --profile poker > ~/.ssh/poker-solver-key.pem
 
 chmod 400 ~/.ssh/poker-solver-key.pem
+
+echo "Key pair saved to ~/.ssh/poker-solver-key.pem"
+```
+
+### 4. Create S3 Bucket (if not exists)
+
+```bash
+aws s3 mb s3://poker-solver-kason --profile poker
+
+# Upload ranges
+aws s3 sync ranges/ s3://poker-solver-kason/v1.1/ranges/ --profile poker
 ```
 
 ---
 
-## Launch Instance for v1.1
-
-### 1. Launch EC2 Instance
+## Verify Setup
 
 ```bash
-# Get latest Amazon Linux 2023 AMI
-AMI_ID=$(aws ec2 describe-images \
-  --owners amazon \
-  --filters "Name=name,Values=al2023-ami-2023.*-x86_64" \
-  --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
-  --output text \
-  --profile poker)
+# Check IAM role
+aws iam get-role --role-name poker-solver-ec2-role --profile poker
 
-# Launch instance
-INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id $AMI_ID \
-  --instance-type r6a.2xlarge \
-  --key-name poker-solver-key \
-  --security-groups poker-solver-sg \
-  --iam-instance-profile Name=poker-solver-profile \
-  --profile poker \
-  --query 'Instances[0].InstanceId' \
-  --output text)
+# Check security group
+aws ec2 describe-security-groups --group-names poker-solver-sg --profile poker
 
-echo "Instance ID: $INSTANCE_ID"
-echo "Waiting for instance to start..."
+# Check key pair
+ls -l ~/.ssh/poker-solver-key.pem
 
-# Wait for instance to be running
-aws ec2 wait instance-running --instance-ids $INSTANCE_ID --profile poker
-
-# Get public IP
-PUBLIC_IP=$(aws ec2 describe-instances \
-  --instance-ids $INSTANCE_ID \
-  --query 'Reservations[0].Instances[0].PublicIpAddress' \
-  --output text \
-  --profile poker)
-
-echo "Instance ready!"
-echo "Public IP: $PUBLIC_IP"
-echo
-echo "SSH command:"
-echo "  ssh -i ~/.ssh/poker-solver-key.pem ec2-user@$PUBLIC_IP"
-```
-
-### 2. SSH into Instance
-
-```bash
-ssh -i ~/.ssh/poker-solver-key.pem ec2-user@$PUBLIC_IP
-```
-
-### 3. Run Setup Script
-
-```bash
-# Inside EC2:
-curl -O https://raw.githubusercontent.com/kasontk7/poker-solver/main/aws/v1.1-setup.sh
-chmod +x v1.1-setup.sh
-./v1.1-setup.sh
-```
-
-Or manually step-by-step:
-```bash
-# 1. Install Rust (~3 min)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source $HOME/.cargo/env
-
-# 2. Clone repo (~10 sec)
-git clone https://github.com/kasontk7/poker-solver.git
-cd poker-solver
-
-# 3. Download ranges (~10 sec)
-aws s3 sync s3://poker-solver-kason/v1.1/ranges/ ranges/
-
-# 4. Compile (~5 min)
-cd solver
-cargo build --release --bin poker_solver
-
-# 5. Run solver (~30 min)
-cd ..
-./solver/target/release/poker_solver | tee solve_output.txt
-
-# 6. Upload results (~10 sec)
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-aws s3 cp solve_output.txt s3://poker-solver-kason/v1.1/results/output_${TIMESTAMP}.txt
-aws s3 cp solutions/ s3://poker-solver-kason/v1.1/results/solutions_${TIMESTAMP}/ --recursive
-```
-
-### 4. Terminate Instance
-
-```bash
-# From local machine:
-aws ec2 terminate-instances --instance-ids $INSTANCE_ID --profile poker
+# Check S3 bucket
+aws s3 ls s3://poker-solver-kason/v1.1/ranges/ --profile poker
 ```
 
 ---
 
-## Download Results
+## Files in This Directory
 
-```bash
-# List results
-aws s3 ls s3://poker-solver-kason/v1.1/results/ --profile poker
-
-# Download everything
-aws s3 sync s3://poker-solver-kason/v1.1/results/ ~/personal/poker-solver/aws-results/ --profile poker
-```
+- **`LAUNCH.md`** - Quick EC2 launch guide (use this for running solves)
+- **`ec2-setup.sh`** - Automated setup script (runs on EC2)
+- **`README.md`** - This file (one-time AWS prerequisites)
+- **`v1.1-checklist.md`** - Detailed launch checklist (deprecated, use LAUNCH.md)
 
 ---
 
-## Cost Estimate
+## Cost Estimates
 
-**v1.1 (single flop, full tree):**
-- Instance: r6a.2xlarge (64 GB RAM)
-- Time: ~41 minutes (3 min Rust + 5 min compile + 30 min solve + 3 min overhead)
-- Price: $0.504/hour
-- **Cost: ~$0.35 per solve**
+**v1.1 (single solve):**
+- Instance: r6a.2xlarge @ $0.504/hour
+- Time: ~7-40 minutes
+- Cost: **~$0.06-0.35**
 
-**v1.2 (full production - 6,992 solves):**
-- 6,992 solves × 30 min each = 3,496 hours
-- Using spot instances ($0.15/hour, 70% cheaper): **~$524**
-- Parallel processing (10 instances): ~350 hours → **15 days**
-- S3 storage: ~$20/month for all solutions
-
-**Spot Instance Benefits:**
-- Price: ~$0.15/hour (vs $0.504 regular)
-- **Cost per solve: ~$0.10**
+**v1.2 (6,992 solves):**
+- Parallel: 100 instances
+- Time: ~3-5 days
+- Cost: **~$1,000-1,500** (compute + egress)
 
 ---
 
 ## Troubleshooting
 
-### Out of Memory
-If solver crashes with OOM:
-- Try 16-bit compression (already enabled in code)
-- Use larger instance: r6a.4xlarge (128 GB, $1/hour)
+**Security group update (if IP changes):**
+```bash
+# Get new security group ID
+SG_ID=$(aws ec2 describe-security-groups \
+  --group-names poker-solver-sg \
+  --profile poker \
+  --query 'SecurityGroups[0].GroupId' \
+  --output text)
 
-### Compile Errors
-- Check Rust version: `rustc --version` (need 1.70+)
-- Update Rust: `rustup update`
+# Add new IP
+MY_IP=$(curl -4 -s ifconfig.me)
+aws ec2 authorize-security-group-ingress \
+  --group-id $SG_ID \
+  --protocol tcp \
+  --port 22 \
+  --cidr ${MY_IP}/32 \
+  --profile poker
+```
 
-### S3 Access Denied
-- Verify IAM role attached: `aws sts get-caller-identity`
-- Check instance profile: `curl http://169.254.169.254/latest/meta-data/iam/info`
+**If IAM role already exists:**
+- Skip role creation, just verify it's attached to instance profile
+
+**If S3 bucket already exists:**
+- Skip bucket creation, just sync ranges
