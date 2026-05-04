@@ -63,16 +63,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         river: NOT_DEALT,
     };
 
-    // Bet sizes configuration (OPTIMIZED for v1.1)
-    // Flop: 50%, all-in
-    // Turn: 50%, all-in
-    // River: 75%, all-in
-    let flop_bet_sizes = BetSizeOptions::try_from(("50%, a", "2.5x"))?;
-    let turn_bet_sizes = BetSizeOptions::try_from(("50%, a", "2.5x"))?;
+    // Bet sizes configuration
+    // Flop: 50%, 100%, 2.5x raise
+    // Turn: 50%, 125%, 2.5x raise
+    // River: 75%, all-in, 2.5x raise
+    let flop_bet_sizes = BetSizeOptions::try_from(("50%, 100%", "2.5x"))?;
+    let turn_bet_sizes = BetSizeOptions::try_from(("50%, 125%", "2.5x"))?;
     let river_bet_sizes = BetSizeOptions::try_from(("75%, a", "2.5x"))?;
 
-    // No donk bets (simplification)
-    // let donk_sizes = DonkSizeOptions::try_from("33%, 50%")?;
+    // Donk bet sizes: 50%
+    let donk_sizes = DonkSizeOptions::try_from("50%")?;
 
     // Tree configuration
     // Starting pot: 5.5bb (SB 0.5bb + BB 2.5bb + BTN 2.5bb)
@@ -88,8 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         flop_bet_sizes: [flop_bet_sizes.clone(), flop_bet_sizes.clone()],
         turn_bet_sizes: [turn_bet_sizes.clone(), turn_bet_sizes.clone()],
         river_bet_sizes: [river_bet_sizes.clone(), river_bet_sizes],
-        turn_donk_sizes: None,  // Disabled for optimization
-        river_donk_sizes: None, // Disabled for optimization
+        turn_donk_sizes: Some(donk_sizes.clone()),
+        river_donk_sizes: Some(donk_sizes),
         add_allin_threshold: 1.5,
         force_allin_threshold: 0.15,
         merging_threshold: 0.1,
