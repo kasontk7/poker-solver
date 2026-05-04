@@ -220,9 +220,16 @@ game_trees: range_pair_hash, bucket_id → game_tree_json (BLOB)
 scenario_mapping: scenario, bucket_id → range_pair_hash, hero_position
 ```
 
+**Preflop Scenarios** (must end with a call to reach flop):
+- RFI vs defend (call): 5 scenarios (UTG/MP/CO/BTN/SB vs BB)
+- RFI vs cold call: 3 scenarios (UTG/MP/CO vs BTN cold call)
+- Open → 3bet → call 3bet: 15 scenarios
+- 3bet → 4bet → call 4bet: 15 scenarios
+- **Total: 38 unique preflop scenarios**
+
 **Deduplication Results**:
-- v1.1: 184 buckets × ~50 scenarios = 9,200 combinations
-- After deduplication: **~5,000-6,000 unique solves** (30-40% reduction)
+- v1.2: 184 flops × 38 scenarios = 6,992 combinations
+- After deduplication: **~4,500-5,500 unique solves** (estimated 20-30% reduction)
 
 See `FINAL_ARCHITECTURE.md` for complete pipeline.
 

@@ -82,10 +82,17 @@ for scenario in scenarios:
         scenario_to_solve[(scenario, flop_bucket)] = pair_hash
 ```
 
+**Preflop Scenarios** (must end with call to reach flop):
+1. RFI vs defend (call): 5 scenarios
+2. RFI vs cold call: 3 scenarios  
+3. Open → 3bet → call 3bet: 15 scenarios
+4. 3bet → 4bet → call 4bet: 15 scenarios
+**Total: 38 scenarios**
+
 **Output**: 
-- ~7,500 scenario×flop combinations
-- ~4,000-5,000 unique range pairs (after deduplication)
-- Each unique pair solved once, reused for multiple scenarios
+- 38 scenarios × 184 flops = **6,992 total combinations**
+- After deduplication: **~4,500-5,500 unique solves** (20-30% reduction)
+- Each unique solve reused for multiple scenarios
 
 ---
 

@@ -185,16 +185,21 @@ aws s3 sync s3://poker-solver-kason/v1.1/results/ ~/personal/poker-solver/aws-re
 
 ## Cost Estimate
 
-**Instance:** r6a.2xlarge (64 GB RAM)
+**v1.1 (single flop, full tree):**
+- Instance: r6a.2xlarge (64 GB RAM)
 - Time: ~41 minutes (3 min Rust + 5 min compile + 30 min solve + 3 min overhead)
 - Price: $0.504/hour
-- **Cost: ~$0.35**
+- **Cost: ~$0.35 per solve**
 
-**Spot Instance (70% cheaper):**
-- Price: ~$0.15/hour
-- **Cost: ~$0.10**
+**v1.2 (full production - 6,992 solves):**
+- 6,992 solves × 30 min each = 3,496 hours
+- Using spot instances ($0.15/hour, 70% cheaper): **~$524**
+- Parallel processing (10 instances): ~350 hours → **15 days**
+- S3 storage: ~$20/month for all solutions
 
-**S3:** Negligible (~$0.001)
+**Spot Instance Benefits:**
+- Price: ~$0.15/hour (vs $0.504 regular)
+- **Cost per solve: ~$0.10**
 
 ---
 

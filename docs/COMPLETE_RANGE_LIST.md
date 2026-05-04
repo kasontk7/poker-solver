@@ -155,14 +155,22 @@ Each tightness level contains the same 80 position-specific ranges.
 - **[RARE]**: <5% of hands - include in v1.1 but lower priority
 - **[VERY RARE]**: <1% of hands - consider excluding or combining
 
-**Most common scenarios for v1.0-v1.1** (no RARE markers):
-- All RFI ranges (6)
-- All defend_vs_RFI ranges (5)
-- Common 3bets: BTN vs CO, BB vs BTN, BB vs CO, BB vs SB (most frequent)
-- Common call_vs_3bet: positions calling 3bets from blinds
-- SB cold calls (unique situation with dead money)
+**Valid Preflop Scenarios** (must end with call to reach flop):
 
-~35 most common scenarios × 4 levels = **140 ranges** for v1.1 focus
+1. **RFI vs defend (call)**: 5 scenarios
+   - UTG/MP/CO/BTN/SB RFI vs BB defend
+
+2. **RFI vs cold call**: 3 scenarios
+   - UTG/MP/CO RFI vs BTN cold_call
+
+3. **Open → 3bet → call 3bet**: 15 scenarios
+   - All position combinations where opener calls a 3bet
+
+4. **3bet → 4bet → call 4bet**: 15 scenarios
+   - All position combinations where 3bettor calls a 4bet
+
+**Total unique scenarios**: 38 scenarios × 4 tightness levels = **152 range pairs**
+**Total v1.2 solves**: 38 scenarios × 184 flops = **6,992 solves** (before deduplication)
 
 ---
 
