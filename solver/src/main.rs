@@ -135,18 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_path = "solutions/v1.0_KhQs6h.bin";
     fs::create_dir_all("solutions")?;
 
-    #[cfg(feature = "bincode")]
-    {
-        game.save(output_path, true)?;
-        let file_size = fs::metadata(output_path)?.len();
-        println!("  Saved to: {}", output_path);
-        println!("  File size: {:.2} MB", file_size as f64 / (1024.0 * 1024.0));
-    }
-
-    #[cfg(not(feature = "bincode"))]
-    {
-        println!("  Skipping save (bincode feature not enabled)");
-    }
+    game.save(output_path, true)?;
+    let file_size = fs::metadata(output_path)?.len();
+    println!("  Saved to: {}", output_path);
+    println!("  File size: {:.2} MB", file_size as f64 / (1024.0 * 1024.0));
 
     println!();
     println!("=== Done! ===");
