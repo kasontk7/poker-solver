@@ -1,0 +1,55 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Solutions (large binary/json files)
+solutions/*.bin
+solutions/*.json
+
+# Compiled solver output
+*.exe
+*.dll
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# AWS
+*.pem
+*.key
+
+# Large data files (add specific patterns as needed)
+data/*.csv
+data/*.db
+*.sqlite
+*.db
+
+# Temporary files
+*.tmp
+*.temp
