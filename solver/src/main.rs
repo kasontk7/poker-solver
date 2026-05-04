@@ -42,8 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load ranges
     println!("Loading ranges...");
-    let ip_range = load_range_from_file("../ranges/gto/BTN/RFI.txt")?;
-    let oop_range = load_range_from_file("../ranges/gto/BB/defend_vs_RFI_BTN.txt")?;
+    let ip_range = load_range_from_file("ranges/gto/BTN/RFI.txt")?;
+    let oop_range = load_range_from_file("ranges/gto/BB/defend_vs_RFI_BTN.txt")?;
 
     println!("  IP (BTN): {} chars", ip_range.len());
     println!("  OOP (BB): {} chars", oop_range.len());
@@ -132,8 +132,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Save the solved game tree
     println!("Saving solution...");
-    let output_path = "../solutions/v1.0_KhQs6h.bin";
-    fs::create_dir_all("../solutions")?;
+    let output_path = "solutions/v1.0_KhQs6h.bin";
+    fs::create_dir_all("solutions")?;
 
     #[cfg(feature = "bincode")]
     {
