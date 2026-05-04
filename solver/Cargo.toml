@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-postflop-solver = { path = "../postflop-solver", default-features = false, features = ["rayon"] }
+postflop-solver = { path = "../postflop-solver", features = ["rayon"] }
+# Note: Enabled default features which includes "bincode" for save/load
