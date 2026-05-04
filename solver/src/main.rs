@@ -35,7 +35,7 @@ fn load_range_from_file(path: &str) -> Result<String, Box<dyn std::error::Error>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Poker Solver v1.0 ===");
+    println!("=== Poker Solver v1.1 ===");
     println!("Scenario: BTN RFI vs BB call");
     println!("Board: KhQs6h (full tree - all turns/rivers for v1.1)");
     println!();
@@ -132,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Save the solved game tree
     println!("Saving solution...");
-    let output_path = "solutions/v1.0_KhQs6h.bin";
+    let output_path = "solutions/v1.1_KhQs6h.bin";
     fs::create_dir_all("solutions")?;
 
     save_data_to_file(&game, "v1.1 BTN RFI vs BB defend, KhQs6h full tree", output_path, None)?;
