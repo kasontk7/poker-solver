@@ -63,16 +63,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         river: NOT_DEALT,
     };
 
-    // Bet sizes configuration
-    // Flop: 25%, 50%, 100%
-    // Turn: 25%, 50%, 100%, all-in
-    // River: 50%, 100%, 150%, all-in
-    let flop_bet_sizes = BetSizeOptions::try_from(("25%, 50%, 100%", "2.5x"))?;
-    let turn_bet_sizes = BetSizeOptions::try_from(("25%, 50%, 100%, a", "2.5x"))?;
-    let river_bet_sizes = BetSizeOptions::try_from(("50%, 100%, 150%, a", "2.5x"))?;
+    // Bet sizes configuration (OPTIMIZED for v1.1)
+    // Flop: 50%, all-in
+    // Turn: 50%, all-in
+    // River: 75%, all-in
+    let flop_bet_sizes = BetSizeOptions::try_from(("50%, a", "2.5x"))?;
+    let turn_bet_sizes = BetSizeOptions::try_from(("50%, a", "2.5x"))?;
+    let river_bet_sizes = BetSizeOptions::try_from(("75%, a", "2.5x"))?;
 
-    // Donk bet sizes: 33%, 50%
-    let donk_sizes = DonkSizeOptions::try_from("33%, 50%")?;
+    // No donk bets (simplification)
+    // let donk_sizes = DonkSizeOptions::try_from("33%, 50%")?;
 
     // Tree configuration
     // Starting pot: 5.5bb (SB 0.5bb + BB 2.5bb + BTN 2.5bb)
@@ -88,8 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         flop_bet_sizes: [flop_bet_sizes.clone(), flop_bet_sizes.clone()],
         turn_bet_sizes: [turn_bet_sizes.clone(), turn_bet_sizes.clone()],
         river_bet_sizes: [river_bet_sizes.clone(), river_bet_sizes],
-        turn_donk_sizes: Some(donk_sizes.clone()),
-        river_donk_sizes: Some(donk_sizes),
+        turn_donk_sizes: None,  // Disabled for optimization
+        river_donk_sizes: None, // Disabled for optimization
         add_allin_threshold: 1.5,
         force_allin_threshold: 0.15,
         merging_threshold: 0.1,
@@ -111,17 +111,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Memory (16-bit compressed): {:.2} MB", mem_usage_compressed as f64 / (1024.0 * 1024.0));
     println!();
 
-    // Allocate memory (use 32-bit float for now)
-    println!("Allocating memory...");
-    game.allocate_memory(false);
+    // Allocate memory with 16-bit compression (OPTIMIZED)
+    println!("Allocating memory with 16-bit compression...");
+    game.allocate_memory(true);  // true = 16-bit compression
     println!();
 
-    // Solve the game
+    // Solve the game (OPTIMIZED convergence)
     println!("Solving game...");
-    let max_iterations = 1000;
-    let target_exploitability = game.tree_config().starting_pot as f32 * 0.005; // 0.5% of pot
+    let max_iterations = 500;  // Reduced from 1000
+    let target_exploitability = 5.0;  // 5 cents (~1% of pot) - relaxed from 2.75
     println!("  Max iterations: {}", max_iterations);
-    println!("  Target exploitability: {:.2} cents ({:.1}% of pot)", target_exploitability, 0.5);
+    println!("  Target exploitability: {:.2} cents (~1% of pot)", target_exploitability);
     println!();
 
     let exploitability = solve(&mut game, max_iterations, target_exploitability, true);
