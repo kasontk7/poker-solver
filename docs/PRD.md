@@ -553,46 +553,69 @@ stealthproject/
 
 ---
 
-### v1.1: Interactive GTO Solver (All Flops)
-**Goal**: Expand to full flop coverage for single scenario
+### v1.1: AWS Pipeline Validation (Single Flop Full Tree)
+**Goal**: Validate full tree solving on AWS before scaling to 184 flops
 
 **Scope**:
+- **Single flop**: KhQs6h (canonical two-tone K-high)
+- **Full tree**: turn NOT_DEALT, river NOT_DEALT (all possible runouts)
 - Same scenario: BTN RFI vs BB call
-- **184 canonical flops** (industry standard, suit-isomorphic)
-- Locked runouts (specific turn/river per flop to save memory)
 - Same solver config as v1.0 (bet sizes, raise sizes, rake)
+- **Compile on EC2** (binary compiled locally won't work - Mac ARM vs Linux x86_64)
 
-**Features**:
-- Generate 184 canonical flops
-- Implement suit normalization algorithm (map any board → canonical)
-- Solve all 184 flops for BTN_RFI_vs_BB_call scenario
-- Enhanced interactive CLI:
-  - Input any flop (e.g., "Ks Qd 7c")
-  - Suit normalize: Real board → canonical board
-  - Suit normalize: Hero hand → canonical hand (using same mapping)
-  - Load appropriate solved tree
-  - Navigate game tree as in v1.0
+**Why this step**:
+- Validates full tree solving works (not just locked runouts)
+- Tests AWS pipeline (EC2, S3, IAM roles)
+- Measures actual memory usage (~30 GB compressed)
+- Validates solve quality and convergence
+- Tests output format for later parsing
+- Provides cost estimate for scaling to 184 flops
+
+**AWS Setup** (one-time):
+- IAM role for S3 access
+- Security group for SSH
+- EC2 key pair
+- S3 bucket (poker-solver-kason)
+
+**Workflow**:
+1. **Prepare locally**: Push code to GitHub, upload ranges to S3
+2. **Launch EC2**: r6a.2xlarge (64 GB RAM, $0.504/hour or $0.15/hour spot)
+3. **Inside EC2**: 
+   - Install Rust (~3 min)
+   - Clone repo (~10 sec)
+   - Download ranges from S3 (~10 sec)
+   - Compile solver (~5 min)
+   - Run solver (~30 min)
+   - Upload results to S3 (~10 sec)
+4. **Terminate instance**
+5. **Download results** from S3
 
 **Deliverables**:
-- Suit normalization implementation (Python or Rust)
-- 184 canonical flop definitions
-- 184 solved game trees (BTN vs BB only, ~0.45 MB each = ~83 MB total)
-- Enhanced CLI with suit normalization
-- Validation across diverse board textures
+- ✅ Modified solver for full tree (NOT_DEALT)
+- ✅ Code pushed to GitHub
+- ✅ Ranges uploaded to S3
+- ✅ AWS setup documentation (`aws/README.md`)
+- ✅ Setup script (`aws/v1.1-setup.sh`)
+- ⬜ 1 solved full tree (~30 GB output)
+- ⬜ Memory usage validation
+- ⬜ Cost validation
 
 **Success Criteria**:
-- All 184 flops solve without errors
-- Suit normalization preserves flush draws correctly
-- Can query any of 22,100 real flops and get correct strategy
-- Flush draw hands show flush draw equity
-- Offsuit hands show non-flush-draw equity
+- Solve completes without OOM (out of memory)
+- Exploitability < 0.5% of pot
+- Output format is parseable
+- Total cost ~$0.10-0.35
+- Can query strategies for any turn/river combo
 
-**Estimated time**: 1-2 weeks
-- Suit normalization algorithm: 4-8 hours
-- 184 flop generation: 2-4 hours
-- Solving: 15 minutes wall time (184 × 5 seconds = 920 seconds)
-- CLI enhancements: 8-16 hours
-- Testing/validation: 8-16 hours
+**Estimated time**: 2-3 days
+- AWS setup: 2-4 hours (one-time)
+- First solve attempt: 41 minutes runtime
+- Analysis/validation: 2-4 hours
+- Documentation: 2 hours
+
+**Estimated cost**: 
+- Single run: $0.35 (on-demand) or $0.10 (spot)
+- With retries/testing: ~$0.50-1.00 total
 
 ---
 
