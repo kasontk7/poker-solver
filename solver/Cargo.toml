@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 postflop-solver = { path = "../postflop-solver", features = ["rayon"] }
+rusqlite = "0.31"
 # Note: Enabled default features which includes "bincode" for save/load

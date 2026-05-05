@@ -2,17 +2,21 @@
 
 ## Organization Structure
 
-Ranges are organized by **tightness level** first, then **position**:
+Ranges are organized by **source** then **scenario type**:
 
 ```
 ranges/
-├── tight/          # ~20% tighter than GTO
-├── gto/            # Baseline optimal
-├── loose/          # ~20% wider than GTO
-└── extra_loose/    # ~40% wider than GTO
+├── gto_wizard/     # Raw downloads from GTO Wizard
+│   ├── rfi/        # 8 RFI scenarios
+│   ├── 3bet/       # 15 3-bet scenarios
+│   └── 4bet/       # 15 4-bet scenarios
+└── gto/            # Converted for solver (same structure)
+    ├── rfi/
+    ├── 3bet/
+    └── 4bet/
 ```
 
-Each tightness level contains the same 80 position-specific ranges.
+Each scenario folder contains 2 range files (OOP + IP positions).
 
 ---
 

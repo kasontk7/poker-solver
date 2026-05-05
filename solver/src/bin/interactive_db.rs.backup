@@ -1,0 +1,1421 @@
+/// Interactive lookup using database + live solving
+/// Uses numbered options (1,2,3) for cleaner input
+
+use postflop_solver::*;
+use rusqlite::Connection;
+use std::io::{self, Write as IoWrite};
+use std::cmp::Ordering;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== GTO Solution Lookup (DB + Live Solving) ===\n");
+
+    let flop = "KhQs6h";
+    println!("Flop: {}", flop);
+    println!("Using database: v11_flop_complete.db");
+    println!("Scenario: BTN_RFI_vs_BB_defend\n");
+
+    let conn = Connection::open("v11_flop_complete.db")?;
+
+    // Get position
+    print!("Your position (OOP/IP): ");
+    io::stdout().flush()?;
+    let mut position_input = String::new();
+    io::stdin().read_line(&mut position_input)?;
+    let position = position_input.trim().to_uppercase();
+
+    if position != "OOP" && position != "IP" {
+        return Err("Position must be 'OOP' or 'IP'".into());
+    }
+
+    // Get hand from user
+    print!("Enter your hand (e.g., ThJh): ");
+    io::stdout().flush()?;
+    let mut hand_input = String::new();
+    io::stdin().read_line(&mut hand_input)?;
+    let hand = hand_input.trim();
+
+    if hand.len() != 4 {
+        return Err("Invalid hand format. Use 4 characters like 'ThJh'".into());
+    }
+
+    println!("\nYour hand: {} ({})", hand, position);
+
+    // Query flop strategies
+    println!("\n=== Flop Strategy (from database) ===");
+
+    // Get OOP actions - show hand-specific only if user is OOP, else show aggregated
+    let mut oop_actions = Vec::new();
+    let mut oop_equity = 0.0;
+    let mut found_oop = false;
+
+    if position == "OOP" {
+        // Show hand-specific strategy for user
+        let mut stmt = conn.prepare(
+            "SELECT action, frequency, equity FROM strategies
+             WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND hand=? AND position='OOP' AND action_history=''
+             ORDER BY frequency DESC")?;
+
+        let mut rows = stmt.query([flop, hand])?;
+
+        while let Some(row) = rows.next()? {
+            found_oop = true;
+            let action: String = row.get(0)?;
+            let freq: f64 = row.get(1)?;
+            oop_equity = row.get(2)?;
+            oop_actions.push((action, freq));
+        }
+
+        if found_oop {
+            println!("\nOOP (BB) strategy (your hand: {}):", hand);
+
+            // Sort actions by type and find max frequency
+            let action_objects: Vec<Action> = oop_actions.iter()
+                .map(|(action_str, _)| parse_action_string(action_str))
+                .collect();
+            let freqs_with_idx: Vec<(usize, f32)> = oop_actions.iter().enumerate()
+                .map(|(i, (_, freq))| (i, *freq as f32))
+                .collect();
+            let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+            let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+            for (display_idx, (orig_idx, action, freq)) in sorted.iter().enumerate() {
+                let is_max = (freq - max_freq).abs() < 0.001;
+                println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+            }
+            println!("  Equity: {:.1}%", oop_equity * 100.0);
+
+            // Update oop_actions to match sorted order for later indexing
+            oop_actions = sorted.iter()
+                .map(|(orig_idx, _, _)| oop_actions[*orig_idx].clone())
+                .collect();
+        }
+    } else {
+        // Show aggregated strategy across all hands
+        // First, get all actions and their frequencies, then normalize
+        let mut stmt = conn.prepare(
+            "SELECT action, SUM(frequency) as total_freq FROM strategies
+             WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND position='OOP' AND action_history=''
+             GROUP BY action")?;
+
+        let mut rows = stmt.query([flop])?;
+        let mut raw_actions: Vec<(String, f64)> = Vec::new();
+        let mut total_sum = 0.0;
+
+        while let Some(row) = rows.next()? {
+            found_oop = true;
+            let action: String = row.get(0)?;
+            let freq: f64 = row.get(1)?;
+            raw_actions.push((action, freq));
+            total_sum += freq;
+        }
+
+        // Normalize to sum to 1.0
+        if total_sum > 0.0 {
+            for (action, freq) in raw_actions {
+                oop_actions.push((action, freq / total_sum));
+            }
+        }
+
+        if found_oop {
+            println!("\nOOP (BB) strategy (aggregated):");
+
+            // Sort actions and find max
+            let action_objects: Vec<Action> = oop_actions.iter()
+                .map(|(action_str, _)| parse_action_string(action_str))
+                .collect();
+            let freqs_with_idx: Vec<(usize, f32)> = oop_actions.iter().enumerate()
+                .map(|(i, (_, freq))| (i, *freq as f32))
+                .collect();
+            let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+            let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+            for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                let is_max = (freq - max_freq).abs() < 0.001;
+                println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+            }
+
+            // Update oop_actions to match sorted order
+            oop_actions = sorted.iter()
+                .map(|(orig_idx, _, _)| oop_actions[*orig_idx].clone())
+                .collect();
+        } else {
+            // If hand is not in OOP range, we need to show generic OOP actions
+            // Query any hand to get the available actions
+            let mut stmt_any = conn.prepare(
+                "SELECT DISTINCT action FROM strategies
+                 WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND position='OOP' AND action_history=''
+                 ORDER BY action DESC")?;
+            let mut rows_any = stmt_any.query([flop])?;
+            while let Some(row) = rows_any.next()? {
+                let action: String = row.get(0)?;
+                oop_actions.push((action, 0.0));
+            }
+
+            println!("\n⚠️  Hand not in BB defend range");
+            if position == "OOP" {
+                return Ok(());
+            }
+            println!("OOP (BB) possible actions:");
+            for (i, (action, _)) in oop_actions.iter().enumerate() {
+                println!("  {}. {}", i + 1, action);
+            }
+        }
+    }
+
+    // Check if hand is in IP range
+    let mut stmt_ip = conn.prepare(
+        "SELECT equity FROM strategies
+         WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND hand=? AND position='IP' AND action_history='Check'
+         LIMIT 1")?;
+
+    let mut rows_ip = stmt_ip.query([flop, hand])?;
+    let found_ip = rows_ip.next()?.is_some();
+
+    if !found_ip {
+        println!("\n⚠️  Hand not in BTN RFI range");
+        if position == "IP" {
+            return Ok(());
+        }
+    }
+
+    if !found_oop && !found_ip {
+        return Err("Hand not found for either player".into());
+    }
+
+    // Interactive flop action loop - continue until call/fold/chance
+    let mut action_history_parts: Vec<String> = Vec::new();
+    let mut current_player = "OOP"; // Start with OOP
+    let mut pot = 550;
+    let mut stack = 9750;
+
+    // First action: OOP
+    print!("\nOOP action (1-{}): ", oop_actions.len());
+    io::stdout().flush()?;
+    let mut oop_choice_input = String::new();
+    io::stdin().read_line(&mut oop_choice_input)?;
+    let oop_choice: usize = oop_choice_input.trim().parse()?;
+
+    if oop_choice < 1 || oop_choice > oop_actions.len() {
+        return Err("Invalid choice".into());
+    }
+
+    let (selected_action, _) = &oop_actions[oop_choice - 1];
+    println!("OOP action: {}", selected_action);
+    action_history_parts.push(selected_action.clone());
+    current_player = "IP";
+
+    // Loop through flop actions until we reach a terminal action (call/fold)
+    loop {
+        let action_history_str = action_history_parts.join("-");
+
+        // Query database for next player's strategy
+        let mut actions_list = Vec::new();
+        let mut player_equity = 0.0;
+
+        let current_pos = if current_player == "OOP" { "OOP" } else { "IP" };
+        let is_my_turn = position == current_player;
+
+        if is_my_turn {
+            // Show hand-specific strategy
+            let mut stmt = conn.prepare(
+                "SELECT action, frequency, equity FROM strategies
+                 WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND hand=? AND position=? AND action_history=?
+                 ORDER BY frequency DESC")?;
+
+            let mut rows = stmt.query([flop, hand, current_pos, &action_history_str])?;
+
+            while let Some(row) = rows.next()? {
+                let action: String = row.get(0)?;
+                let freq: f64 = row.get(1)?;
+                player_equity = row.get(2)?;
+                actions_list.push((action, freq));
+            }
+
+            if actions_list.is_empty() {
+                println!("\n⚠️  No more actions available in database for this sequence");
+                break;
+            }
+
+            println!("\n{} ({}) strategy (your hand: {}):", current_player, if current_player == "OOP" { "BB" } else { "BTN" }, hand);
+
+            // Sort and display
+            let action_objects: Vec<Action> = actions_list.iter()
+                .map(|(action_str, _)| parse_action_string(action_str))
+                .collect();
+            let freqs_with_idx: Vec<(usize, f32)> = actions_list.iter().enumerate()
+                .map(|(i, (_, freq))| (i, *freq as f32))
+                .collect();
+            let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+            let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+            for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                let is_max = (freq - max_freq).abs() < 0.001;
+                println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+            }
+            println!("  Equity: {:.1}%", player_equity * 100.0);
+
+            // Update actions_list to match sorted order
+            actions_list = sorted.iter()
+                .map(|(orig_idx, _, _)| actions_list[*orig_idx].clone())
+                .collect();
+
+        } else {
+            // Show aggregated strategy for opponent
+            let mut stmt = conn.prepare(
+                "SELECT action, SUM(frequency) as total_freq FROM strategies
+                 WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND position=? AND action_history=?
+                 GROUP BY action")?;
+
+            let mut rows = stmt.query([flop, current_pos, &action_history_str])?;
+            let mut raw_actions: Vec<(String, f64)> = Vec::new();
+            let mut total_sum = 0.0;
+
+            while let Some(row) = rows.next()? {
+                let action: String = row.get(0)?;
+                let freq: f64 = row.get(1)?;
+                raw_actions.push((action, freq));
+                total_sum += freq;
+            }
+
+            // Normalize to sum to 1.0
+            if total_sum > 0.0 {
+                for (action, freq) in raw_actions {
+                    actions_list.push((action, freq / total_sum));
+                }
+            }
+
+            if actions_list.is_empty() {
+                println!("\n⚠️  No more actions available in database for this sequence");
+                break;
+            }
+
+            println!("\n{} ({}) strategy (aggregated):", current_player, if current_player == "OOP" { "BB" } else { "BTN" });
+
+            // Sort and display
+            let action_objects: Vec<Action> = actions_list.iter()
+                .map(|(action_str, _)| parse_action_string(action_str))
+                .collect();
+            let freqs_with_idx: Vec<(usize, f32)> = actions_list.iter().enumerate()
+                .map(|(i, (_, freq))| (i, *freq as f32))
+                .collect();
+            let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+            let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+            for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                let is_max = (freq - max_freq).abs() < 0.001;
+                println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+            }
+
+            // Update actions_list to match sorted order
+            actions_list = sorted.iter()
+                .map(|(orig_idx, _, _)| actions_list[*orig_idx].clone())
+                .collect();
+        }
+
+        // Get player action
+        print!("\n{} action (1-{}): ", current_player, actions_list.len());
+        io::stdout().flush()?;
+        let mut choice_input = String::new();
+        io::stdin().read_line(&mut choice_input)?;
+        let choice: usize = choice_input.trim().parse()?;
+
+        if choice < 1 || choice > actions_list.len() {
+            return Err("Invalid choice".into());
+        }
+
+        let (selected_action, _) = &actions_list[choice - 1];
+        println!("{} action: {}", current_player, selected_action);
+
+        // Check if this action is terminal (call or fold)
+        let action_obj = parse_action_string(selected_action);
+        let is_terminal = matches!(action_obj, Action::Call | Action::Fold);
+
+        action_history_parts.push(selected_action.clone());
+
+        if is_terminal {
+            // End of flop action
+            break;
+        }
+
+        // Switch player
+        current_player = if current_player == "OOP" { "IP" } else { "OOP" };
+    }
+
+    // Calculate final pot and stack from all actions
+    pot = calculate_pot_from_actions(&action_history_parts, 550, 9750)?;
+    stack = calculate_stack_from_actions(&action_history_parts, 9750)?;
+
+    // Get IP response options - show hand-specific only if user is IP, else show aggregated
+    let mut ip_actions = Vec::new();
+    let mut ip_equity = 0.0;
+
+    if position == "IP" {
+        // Show hand-specific strategy for user
+        let mut stmt_ip_resp = conn.prepare(
+            "SELECT action, frequency, equity FROM strategies
+             WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND hand=? AND position='IP' AND action_history=?
+             ORDER BY frequency DESC")?;
+
+        let mut rows_ip_resp = stmt_ip_resp.query([flop, hand, action_history])?;
+
+        while let Some(row) = rows_ip_resp.next()? {
+            let action: String = row.get(0)?;
+            let freq: f64 = row.get(1)?;
+            ip_equity = row.get(2)?;
+            ip_actions.push((action, freq));
+        }
+
+        println!("\nIP (BTN) strategy (your hand: {}):", hand);
+
+        // Sort and display
+        let action_objects: Vec<Action> = ip_actions.iter()
+            .map(|(action_str, _)| parse_action_string(action_str))
+            .collect();
+        let freqs_with_idx: Vec<(usize, f32)> = ip_actions.iter().enumerate()
+            .map(|(i, (_, freq))| (i, *freq as f32))
+            .collect();
+        let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+        let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+        for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+            let is_max = (freq - max_freq).abs() < 0.001;
+            println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+        }
+        println!("  Equity: {:.1}%", ip_equity * 100.0);
+
+        // Update ip_actions to match sorted order
+        ip_actions = sorted.iter()
+            .map(|(orig_idx, _, _)| ip_actions[*orig_idx].clone())
+            .collect();
+    } else {
+        // Show aggregated strategy across all hands
+        let mut stmt_ip_resp = conn.prepare(
+            "SELECT action, SUM(frequency) as total_freq FROM strategies
+             WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND position='IP' AND action_history=?
+             GROUP BY action")?;
+
+        let mut rows_ip_resp = stmt_ip_resp.query([flop, action_history])?;
+        let mut raw_actions: Vec<(String, f64)> = Vec::new();
+        let mut total_sum = 0.0;
+
+        while let Some(row) = rows_ip_resp.next()? {
+            let action: String = row.get(0)?;
+            let freq: f64 = row.get(1)?;
+            raw_actions.push((action, freq));
+            total_sum += freq;
+        }
+
+        // Normalize to sum to 1.0
+        if total_sum > 0.0 {
+            for (action, freq) in raw_actions {
+                ip_actions.push((action, freq / total_sum));
+            }
+        }
+
+        println!("\nIP (BTN) strategy (aggregated):");
+
+        // Sort and display
+        let action_objects: Vec<Action> = ip_actions.iter()
+            .map(|(action_str, _)| parse_action_string(action_str))
+            .collect();
+        let freqs_with_idx: Vec<(usize, f32)> = ip_actions.iter().enumerate()
+            .map(|(i, (_, freq))| (i, *freq as f32))
+            .collect();
+        let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+        let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+        for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+            let is_max = (freq - max_freq).abs() < 0.001;
+            println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+        }
+
+        // Update ip_actions to match sorted order
+        ip_actions = sorted.iter()
+            .map(|(orig_idx, _, _)| ip_actions[*orig_idx].clone())
+            .collect();
+    }
+
+    // Get IP action
+    print!("\nIP action (1-{}): ", ip_actions.len());
+    io::stdout().flush()?;
+    let mut ip_choice_input = String::new();
+    io::stdin().read_line(&mut ip_choice_input)?;
+    let ip_choice: usize = ip_choice_input.trim().parse()?;
+
+    if ip_choice < 1 || ip_choice > ip_actions.len() {
+        return Err("Invalid choice".into());
+    }
+
+    let (selected_ip_action, _) = &ip_actions[ip_choice - 1];
+    println!("IP action: {}", selected_ip_action);
+
+    // Check if OOP needs to respond on flop (e.g., OOP checked, IP bet)
+    let mut pot = 550;
+    let mut stack = 9750;
+
+    // Determine if OOP needs to respond
+    let oop_needs_response = (selected_oop_action == "Check" && selected_ip_action.starts_with("Bet"))
+        || (selected_oop_action.starts_with("Bet") && selected_ip_action.starts_with("Raise"));
+
+    if oop_needs_response {
+        // Build action history for OOP's response
+        let ip_action_history = format!("{}-{}", selected_oop_action, selected_ip_action);
+
+        // Get OOP response options from database
+        let mut oop_response_actions = Vec::new();
+        let mut oop_response_equity = 0.0;
+
+        if position == "OOP" {
+            // Show hand-specific
+            let mut stmt_oop_resp = conn.prepare(
+                "SELECT action, frequency, equity FROM strategies
+                 WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND hand=? AND position='OOP' AND action_history=?
+                 ORDER BY frequency DESC")?;
+
+            let mut rows_oop_resp = stmt_oop_resp.query([flop, hand, ip_action_history.as_str()])?;
+
+            while let Some(row) = rows_oop_resp.next()? {
+                let action: String = row.get(0)?;
+                let freq: f64 = row.get(1)?;
+                oop_response_equity = row.get(2)?;
+                oop_response_actions.push((action, freq));
+            }
+
+            if !oop_response_actions.is_empty() {
+                println!("\nOOP (BB) response (your hand: {}):", hand);
+
+                // Sort and display
+                let action_objects: Vec<Action> = oop_response_actions.iter()
+                    .map(|(action_str, _)| parse_action_string(action_str))
+                    .collect();
+                let freqs_with_idx: Vec<(usize, f32)> = oop_response_actions.iter().enumerate()
+                    .map(|(i, (_, freq))| (i, *freq as f32))
+                    .collect();
+                let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+                let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+                for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                    let is_max = (freq - max_freq).abs() < 0.001;
+                    println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+                }
+                println!("  Equity: {:.1}%", oop_response_equity * 100.0);
+
+                // Update to match sorted order
+                oop_response_actions = sorted.iter()
+                    .map(|(orig_idx, _, _)| oop_response_actions[*orig_idx].clone())
+                    .collect();
+
+                // Get OOP response
+                print!("\nOOP action (1-{}): ", oop_response_actions.len());
+                io::stdout().flush()?;
+                let mut oop_response_choice = String::new();
+                io::stdin().read_line(&mut oop_response_choice)?;
+                let oop_resp_choice: usize = oop_response_choice.trim().parse()?;
+
+                if oop_resp_choice < 1 || oop_resp_choice > oop_response_actions.len() {
+                    return Err("Invalid choice".into());
+                }
+
+                let (selected_oop_response, _) = &oop_response_actions[oop_resp_choice - 1];
+                println!("OOP action: {}", selected_oop_response);
+
+                // Calculate pot/stack after OOP response
+                let (new_pot, new_stack) = calculate_pot_stack_three_actions(
+                    selected_oop_action, selected_ip_action, selected_oop_response, 550, 9750)?;
+                pot = new_pot;
+                stack = new_stack;
+            }
+        } else {
+            // Show aggregated for opponent
+            let mut stmt_oop_resp = conn.prepare(
+                "SELECT action, SUM(frequency) as total_freq FROM strategies
+                 WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND position='OOP' AND action_history=?
+                 GROUP BY action")?;
+
+            let mut rows_oop_resp = stmt_oop_resp.query([flop, ip_action_history.as_str()])?;
+            let mut raw_actions: Vec<(String, f64)> = Vec::new();
+            let mut total_sum = 0.0;
+
+            while let Some(row) = rows_oop_resp.next()? {
+                let action: String = row.get(0)?;
+                let freq: f64 = row.get(1)?;
+                raw_actions.push((action, freq));
+                total_sum += freq;
+            }
+
+            // Normalize to sum to 1.0
+            if total_sum > 0.0 {
+                for (action, freq) in raw_actions {
+                    oop_response_actions.push((action, freq / total_sum));
+                }
+            }
+
+            if !oop_response_actions.is_empty() {
+                println!("\nOOP (BB) response (aggregated):");
+
+                // Sort and display
+                let action_objects: Vec<Action> = oop_response_actions.iter()
+                    .map(|(action_str, _)| parse_action_string(action_str))
+                    .collect();
+                let freqs_with_idx: Vec<(usize, f32)> = oop_response_actions.iter().enumerate()
+                    .map(|(i, (_, freq))| (i, *freq as f32))
+                    .collect();
+                let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+                let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+                for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                    let is_max = (freq - max_freq).abs() < 0.001;
+                    println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+                }
+
+                // Update to match sorted order
+                oop_response_actions = sorted.iter()
+                    .map(|(orig_idx, _, _)| oop_response_actions[*orig_idx].clone())
+                    .collect();
+
+                // Get OOP response
+                print!("\nOOP action (1-{}): ", oop_response_actions.len());
+                io::stdout().flush()?;
+                let mut oop_response_choice = String::new();
+                io::stdin().read_line(&mut oop_response_choice)?;
+                let oop_resp_choice: usize = oop_response_choice.trim().parse()?;
+
+                if oop_resp_choice < 1 || oop_resp_choice > oop_response_actions.len() {
+                    return Err("Invalid choice".into());
+                }
+
+                let (selected_oop_response, _) = &oop_response_actions[oop_resp_choice - 1];
+                println!("OOP action: {}", selected_oop_response);
+
+                // Check if OOP raised/bet and IP needs to respond
+                let oop_response_action = parse_action_string(selected_oop_response);
+                let oop_raised = matches!(oop_response_action, Action::Raise(_) | Action::Bet(_) | Action::AllIn(_));
+
+                if oop_raised {
+                    // IP needs to respond to OOP's raise
+                    let ip_response_history = format!("{}-{}-{}", selected_oop_action, selected_ip_action, selected_oop_response);
+                    let mut ip_response_actions = Vec::new();
+
+                    if position == "IP" {
+                        // Show hand-specific strategy for user
+                        let mut stmt_ip_resp2 = conn.prepare(
+                            "SELECT action, frequency, equity FROM strategies
+                             WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND hand=? AND position='IP' AND action_history=?
+                             ORDER BY frequency DESC")?;
+
+                        let mut rows_ip_resp2 = stmt_ip_resp2.query([flop, hand, ip_response_history.as_str()])?;
+
+                        while let Some(row) = rows_ip_resp2.next()? {
+                            let action: String = row.get(0)?;
+                            let freq: f64 = row.get(1)?;
+                            ip_equity = row.get(2)?;
+                            ip_response_actions.push((action, freq));
+                        }
+
+                        if !ip_response_actions.is_empty() {
+                            println!("\nIP (BTN) response (your hand: {}):", hand);
+
+                            // Sort and display
+                            let action_objects: Vec<Action> = ip_response_actions.iter()
+                                .map(|(action_str, _)| parse_action_string(action_str))
+                                .collect();
+                            let freqs_with_idx: Vec<(usize, f32)> = ip_response_actions.iter().enumerate()
+                                .map(|(i, (_, freq))| (i, *freq as f32))
+                                .collect();
+                            let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+                            let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+                            for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                                let is_max = (freq - max_freq).abs() < 0.001;
+                                println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+                            }
+                            println!("  Equity: {:.1}%", ip_equity * 100.0);
+
+                            // Update to match sorted order
+                            ip_response_actions = sorted.iter()
+                                .map(|(orig_idx, _, _)| ip_response_actions[*orig_idx].clone())
+                                .collect();
+
+                            // Get IP response
+                            print!("\nIP action (1-{}): ", ip_response_actions.len());
+                            io::stdout().flush()?;
+                            let mut ip_response_choice = String::new();
+                            io::stdin().read_line(&mut ip_response_choice)?;
+                            let ip_resp_choice: usize = ip_response_choice.trim().parse()?;
+
+                            if ip_resp_choice < 1 || ip_resp_choice > ip_response_actions.len() {
+                                return Err("Invalid choice".into());
+                            }
+
+                            let (selected_ip_response, _) = &ip_response_actions[ip_resp_choice - 1];
+                            println!("IP action: {}", selected_ip_response);
+
+                            // Calculate pot/stack after 4 actions
+                            let (new_pot, new_stack) = calculate_pot_stack_four_actions(
+                                selected_oop_action, selected_ip_action, selected_oop_response, selected_ip_response, 550, 9750)?;
+                            pot = new_pot;
+                            stack = new_stack;
+                        } else {
+                            // Hand not in range for this response
+                            println!("\n⚠️  Hand not in range for this action sequence");
+                            // Still calculate pot/stack from 3 actions
+                            let (new_pot, new_stack) = calculate_pot_stack_three_actions(
+                                selected_oop_action, selected_ip_action, selected_oop_response, 550, 9750)?;
+                            pot = new_pot;
+                            stack = new_stack;
+                        }
+                    } else {
+                        // Show aggregated for opponent
+                        let mut stmt_ip_resp2 = conn.prepare(
+                            "SELECT action, SUM(frequency) as total_freq FROM strategies
+                             WHERE scenario='BTN_RFI_vs_BB_defend' AND board=? AND position='IP' AND action_history=?
+                             GROUP BY action")?;
+
+                        let mut rows_ip_resp2 = stmt_ip_resp2.query([flop, ip_response_history.as_str()])?;
+                        let mut raw_actions: Vec<(String, f64)> = Vec::new();
+                        let mut total_sum = 0.0;
+
+                        while let Some(row) = rows_ip_resp2.next()? {
+                            let action: String = row.get(0)?;
+                            let freq: f64 = row.get(1)?;
+                            raw_actions.push((action, freq));
+                            total_sum += freq;
+                        }
+
+                        // Normalize to sum to 1.0
+                        if total_sum > 0.0 {
+                            for (action, freq) in raw_actions {
+                                ip_response_actions.push((action, freq / total_sum));
+                            }
+                        }
+
+                        if !ip_response_actions.is_empty() {
+                            println!("\nIP (BTN) response (aggregated):");
+
+                            // Sort and display
+                            let action_objects: Vec<Action> = ip_response_actions.iter()
+                                .map(|(action_str, _)| parse_action_string(action_str))
+                                .collect();
+                            let freqs_with_idx: Vec<(usize, f32)> = ip_response_actions.iter().enumerate()
+                                .map(|(i, (_, freq))| (i, *freq as f32))
+                                .collect();
+                            let sorted = sort_actions_with_freq(&action_objects, &freqs_with_idx);
+                            let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+                            for (display_idx, (_orig_idx, action, freq)) in sorted.iter().enumerate() {
+                                let is_max = (freq - max_freq).abs() < 0.001;
+                                println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+                            }
+
+                            // Update to match sorted order
+                            ip_response_actions = sorted.iter()
+                                .map(|(orig_idx, _, _)| ip_response_actions[*orig_idx].clone())
+                                .collect();
+
+                            // Get IP response
+                            print!("\nIP action (1-{}): ", ip_response_actions.len());
+                            io::stdout().flush()?;
+                            let mut ip_response_choice = String::new();
+                            io::stdin().read_line(&mut ip_response_choice)?;
+                            let ip_resp_choice: usize = ip_response_choice.trim().parse()?;
+
+                            if ip_resp_choice < 1 || ip_resp_choice > ip_response_actions.len() {
+                                return Err("Invalid choice".into());
+                            }
+
+                            let (selected_ip_response, _) = &ip_response_actions[ip_resp_choice - 1];
+                            println!("IP action: {}", selected_ip_response);
+
+                            // Calculate pot/stack after 4 actions
+                            let (new_pot, new_stack) = calculate_pot_stack_four_actions(
+                                selected_oop_action, selected_ip_action, selected_oop_response, selected_ip_response, 550, 9750)?;
+                            pot = new_pot;
+                            stack = new_stack;
+                        } else {
+                            // No data for this action sequence
+                            let (new_pot, new_stack) = calculate_pot_stack_three_actions(
+                                selected_oop_action, selected_ip_action, selected_oop_response, 550, 9750)?;
+                            pot = new_pot;
+                            stack = new_stack;
+                        }
+                    }
+                } else {
+                    // OOP didn't raise, just calculate pot/stack from 3 actions
+                    let (new_pot, new_stack) = calculate_pot_stack_three_actions(
+                        selected_oop_action, selected_ip_action, selected_oop_response, 550, 9750)?;
+                    pot = new_pot;
+                    stack = new_stack;
+                }
+            }
+        }
+    } else {
+        // No OOP response needed, just calculate pot/stack from the two actions
+        let (new_pot, new_stack) = calculate_pot_stack(selected_oop_action, selected_ip_action, 550, 9750)?;
+        pot = new_pot;
+        stack = new_stack;
+    }
+
+    println!("\nAfter flop: Pot = {}¢, Stack = {}¢", pot, stack);
+
+    // Ask if user wants turn
+    print!("\nSolve turn? (y/n): ");
+    io::stdout().flush()?;
+    let mut turn_choice = String::new();
+    io::stdin().read_line(&mut turn_choice)?;
+
+    if turn_choice.trim().to_lowercase() != "y" {
+        return Ok(());
+    }
+
+    // Get turn card
+    print!("Turn card (e.g., 7h): ");
+    io::stdout().flush()?;
+    let mut turn_input = String::new();
+    io::stdin().read_line(&mut turn_input)?;
+    let turn_card = turn_input.trim();
+
+    if turn_card.len() != 2 {
+        return Err("Invalid turn card format. Use 2 characters like '7h'".into());
+    }
+
+    println!("\n=== Turn Strategy (live solve) ===");
+    println!("Solving turn + all rivers (~0.15s)...");
+
+    // Use filtered ranges (simplified - in real app would filter based on flop action)
+    let oop_range = "AA,KK,QQ,JJ,TT,99,AKs,AKo,AQs,KQs,QJs,JTs";
+    let ip_range = "AA,KK,QQ,JJ,TT,99,88,AKs,AKo,AQs,KQs,QJs,JTs";
+
+    let card_config = CardConfig {
+        range: [oop_range.parse()?, ip_range.parse()?],
+        flop: flop_from_str(flop)?,
+        turn: card_from_str(turn_card)?,
+        river: NOT_DEALT,
+    };
+
+    let turn_bet = BetSizeOptions::try_from(("50%, 100%", "3x, 5x"))?;
+    let river_bet = BetSizeOptions::try_from(("75%, 150%, a", "3x, 5x"))?;
+
+    let tree_config = TreeConfig {
+        initial_state: BoardState::Turn,
+        starting_pot: pot,
+        effective_stack: stack,
+        rake_rate: 0.0,
+        rake_cap: 0.0,
+        flop_bet_sizes: [turn_bet.clone(), turn_bet.clone()],
+        turn_bet_sizes: [turn_bet.clone(), turn_bet],
+        river_bet_sizes: [river_bet.clone(), river_bet],
+        turn_donk_sizes: None,
+        river_donk_sizes: None,
+        add_allin_threshold: 1.5,
+        force_allin_threshold: 0.15,
+        merging_threshold: 0.1,
+    };
+
+    let action_tree = ActionTree::new(tree_config)?;
+    let mut game = PostFlopGame::with_config(card_config, action_tree)?;
+    game.allocate_memory(true);
+    solve(&mut game, 200, 5.0, false);
+
+    game.back_to_root();
+    game.cache_normalized_weights();
+
+    let actions = game.available_actions();
+    let oop_cards = game.private_cards(0);
+    let ip_cards = game.private_cards(1);
+    let oop_cards_len = oop_cards.len();
+    let ip_cards_len = ip_cards.len();
+    let oop_strategy = game.strategy();
+    let oop_equity = game.equity(0);
+
+    // Parse hand
+    let hand_card1 = card_from_str(&hand[0..2])?;
+    let hand_card2 = card_from_str(&hand[2..4])?;
+
+    // Find hand index in each player's range
+    let oop_hand_idx = oop_cards.iter().position(|&(c1, c2)|
+        (c1 == hand_card1 && c2 == hand_card2) || (c1 == hand_card2 && c2 == hand_card1));
+    let ip_hand_idx = ip_cards.iter().position(|&(c1, c2)|
+        (c1 == hand_card1 && c2 == hand_card2) || (c1 == hand_card2 && c2 == hand_card1));
+
+    // Show OOP root strategy and get action
+    println!("\nOOP (BB) turn strategy:");
+
+    let oop_actions: Vec<Action> = actions.clone();
+
+    if position == "OOP" {
+        if let Some(idx) = oop_hand_idx {
+            println!("  Your hand: {}", hand);
+            for (i, action) in oop_actions.iter().enumerate() {
+                let freq = oop_strategy[idx + i * oop_cards.len()];
+                if freq > 0.01 {
+                    println!("  {}. {:?}: {:.1}%", i + 1, action, freq * 100.0);
+                }
+            }
+            println!("  Equity: {:.1}%", oop_equity[idx] * 100.0);
+        } else {
+            println!("  ⚠️  Hand not in filtered range");
+            return Ok(());
+        }
+    } else {
+        // Show aggregated strategy for opponent
+        for (i, action) in oop_actions.iter().enumerate() {
+            let mut total_freq = 0.0;
+            for hand_idx in 0..oop_cards_len {
+                total_freq += oop_strategy[hand_idx + i * oop_cards_len];
+            }
+            let avg_freq = total_freq / oop_cards_len as f32;
+            if avg_freq > 0.01 {
+                println!("  {}. {:?}: {:.1}%", i + 1, action, avg_freq * 100.0);
+            }
+        }
+    }
+
+    print!("\nOOP action (1-{}): ", oop_actions.len());
+    io::stdout().flush()?;
+    let mut oop_turn_choice = String::new();
+    io::stdin().read_line(&mut oop_turn_choice)?;
+    let oop_turn_action_idx: usize = oop_turn_choice.trim().parse::<usize>()? - 1;
+
+    if oop_turn_action_idx >= oop_actions.len() {
+        return Err("Invalid choice".into());
+    }
+
+    println!("OOP action: {:?}", oop_actions[oop_turn_action_idx]);
+
+    // Navigate to IP's response
+    game.play(oop_turn_action_idx);
+    game.cache_normalized_weights();
+
+    // Check if terminal (OOP bet and we need IP response)
+    if !game.is_terminal_node() {
+        let ip_actions = game.available_actions();
+        let ip_strategy = game.strategy();
+
+        println!("\nIP (BTN) strategy:");
+
+        if position == "IP" {
+            if let Some(idx) = ip_hand_idx {
+                println!("  Your hand: {}", hand);
+                for (i, action) in ip_actions.iter().enumerate() {
+                    let freq = ip_strategy[idx + i * ip_cards_len];
+                    if freq > 0.01 {
+                        println!("  {}. {:?}: {:.1}%", i + 1, action, freq * 100.0);
+                    }
+                }
+                let ip_equity_current = game.equity(1);
+                println!("  Equity: {:.1}%", ip_equity_current[idx] * 100.0);
+            } else {
+                println!("  ⚠️  Hand not in filtered range");
+                return Ok(());
+            }
+        } else {
+            // Show aggregated
+            for (i, action) in ip_actions.iter().enumerate() {
+                let mut total_freq = 0.0;
+                for hand_idx in 0..ip_cards_len {
+                    total_freq += ip_strategy[hand_idx + i * ip_cards_len];
+                }
+                let avg_freq = total_freq / ip_cards_len as f32;
+                if avg_freq > 0.01 {
+                    println!("  {}. {:?}: {:.1}%", i + 1, action, avg_freq * 100.0);
+                }
+            }
+        }
+
+        print!("\nIP action (1-{}): ", ip_actions.len());
+        io::stdout().flush()?;
+        let mut ip_turn_choice = String::new();
+        io::stdin().read_line(&mut ip_turn_choice)?;
+        let ip_turn_action_idx: usize = ip_turn_choice.trim().parse::<usize>()? - 1;
+
+        if ip_turn_action_idx >= ip_actions.len() {
+            return Err("Invalid choice".into());
+        }
+
+        println!("IP action: {:?}", ip_actions[ip_turn_action_idx]);
+
+        // Navigate to IP's action
+        game.play(ip_turn_action_idx);
+        game.cache_normalized_weights();
+
+        // Check if OOP needs to respond (e.g., IP bet after OOP checked, or IP raised)
+        if !game.is_terminal_node() && game.current_player() == 0 {
+            let oop_response_actions = game.available_actions();
+            let oop_response_strategy = game.strategy();
+
+            println!("\nOOP (BB) response:");
+
+            if position == "OOP" {
+                if let Some(idx) = oop_hand_idx {
+                    println!("  Your hand: {}", hand);
+                    for (i, action) in oop_response_actions.iter().enumerate() {
+                        let freq = oop_response_strategy[idx + i * oop_cards_len];
+                        if freq > 0.01 {
+                            println!("  {}. {:?}: {:.1}%", i + 1, action, freq * 100.0);
+                        }
+                    }
+                    let oop_equity_current = game.equity(0);
+                    println!("  Equity: {:.1}%", oop_equity_current[idx] * 100.0);
+                } else {
+                    println!("  ⚠️  Hand not in filtered range");
+                    return Ok(());
+                }
+            } else {
+                // Show aggregated
+                for (i, action) in oop_response_actions.iter().enumerate() {
+                    let mut total_freq = 0.0;
+                    for hand_idx in 0..oop_cards_len {
+                        total_freq += oop_response_strategy[hand_idx + i * oop_cards_len];
+                    }
+                    let avg_freq = total_freq / oop_cards_len as f32;
+                    if avg_freq > 0.01 {
+                        println!("  {}. {:?}: {:.1}%", i + 1, action, avg_freq * 100.0);
+                    }
+                }
+            }
+
+            print!("\nOOP action (1-{}): ", oop_response_actions.len());
+            io::stdout().flush()?;
+            let mut oop_response_choice = String::new();
+            io::stdin().read_line(&mut oop_response_choice)?;
+            let oop_response_action_idx: usize = oop_response_choice.trim().parse::<usize>()? - 1;
+
+            if oop_response_action_idx >= oop_response_actions.len() {
+                return Err("Invalid choice".into());
+            }
+
+            println!("OOP action: {:?}", oop_response_actions[oop_response_action_idx]);
+        }
+    }
+
+    // After turn complete, ask for river
+    print!("\nSolve river? (y/n): ");
+    io::stdout().flush()?;
+    let mut river_choice = String::new();
+    io::stdin().read_line(&mut river_choice)?;
+
+    if river_choice.trim().to_lowercase() != "y" {
+        return Ok(());
+    }
+
+    // Get river card
+    print!("River card (e.g., 2d): ");
+    io::stdout().flush()?;
+    let mut river_input = String::new();
+    io::stdin().read_line(&mut river_input)?;
+    let river_card = river_input.trim();
+
+    if river_card.len() != 2 {
+        return Err("Invalid river card format. Use 2 characters like '2d'".into());
+    }
+
+    println!("\n=== River Strategy (live solve) ===");
+    println!("Solving river (~0.01s)...");
+
+    // Use same filtered ranges as turn
+    let oop_range = "AA,KK,QQ,JJ,TT,99,AKs,AKo,AQs,KQs,QJs,JTs";
+    let ip_range = "AA,KK,QQ,JJ,TT,99,88,AKs,AKo,AQs,KQs,QJs,JTs";
+
+    let card_config_river = CardConfig {
+        range: [oop_range.parse()?, ip_range.parse()?],
+        flop: flop_from_str(flop)?,
+        turn: card_from_str(turn_card)?,
+        river: card_from_str(river_card)?,
+    };
+
+    let river_bet = BetSizeOptions::try_from(("75%, 150%, a", "3x, 5x"))?;
+
+    let tree_config_river = TreeConfig {
+        initial_state: BoardState::River,
+        starting_pot: pot,
+        effective_stack: stack,
+        rake_rate: 0.0,
+        rake_cap: 0.0,
+        flop_bet_sizes: [river_bet.clone(), river_bet.clone()],
+        turn_bet_sizes: [river_bet.clone(), river_bet.clone()],
+        river_bet_sizes: [river_bet.clone(), river_bet],
+        turn_donk_sizes: None,
+        river_donk_sizes: None,
+        add_allin_threshold: 1.5,
+        force_allin_threshold: 0.15,
+        merging_threshold: 0.1,
+    };
+
+    let action_tree_river = ActionTree::new(tree_config_river)?;
+    let mut game_river = PostFlopGame::with_config(card_config_river, action_tree_river)?;
+    game_river.allocate_memory(true);
+    solve(&mut game_river, 200, 5.0, false);
+
+    game_river.back_to_root();
+    game_river.cache_normalized_weights();
+
+    let river_actions = game_river.available_actions();
+    let oop_cards_river = game_river.private_cards(0);
+    let ip_cards_river = game_river.private_cards(1);
+    let oop_cards_len_river = oop_cards_river.len();
+    let ip_cards_len_river = ip_cards_river.len();
+    let oop_strategy_river = game_river.strategy();
+    let oop_equity_river = game_river.equity(0);
+
+    // Find hand index in river ranges
+    let oop_hand_idx_river = oop_cards_river.iter().position(|&(c1, c2)|
+        (c1 == hand_card1 && c2 == hand_card2) || (c1 == hand_card2 && c2 == hand_card1));
+    let ip_hand_idx_river = ip_cards_river.iter().position(|&(c1, c2)|
+        (c1 == hand_card1 && c2 == hand_card2) || (c1 == hand_card2 && c2 == hand_card1));
+
+    // Show OOP root strategy and get action
+    println!("\nOOP (BB) river strategy:");
+
+    let oop_actions_river: Vec<Action> = river_actions.clone();
+
+    if position == "OOP" {
+        if let Some(idx) = oop_hand_idx_river {
+            println!("  Your hand: {}", hand);
+            for (i, action) in oop_actions_river.iter().enumerate() {
+                let freq = oop_strategy_river[idx + i * oop_cards_len_river];
+                if freq > 0.01 {
+                    println!("  {}. {:?}: {:.1}%", i + 1, action, freq * 100.0);
+                }
+            }
+            println!("  Equity: {:.1}%", oop_equity_river[idx] * 100.0);
+        } else {
+            println!("  ⚠️  Hand not in filtered range");
+            return Ok(());
+        }
+    } else {
+        // Show aggregated strategy for opponent
+        for (i, action) in oop_actions_river.iter().enumerate() {
+            let mut total_freq = 0.0;
+            for hand_idx in 0..oop_cards_len_river {
+                total_freq += oop_strategy_river[hand_idx + i * oop_cards_len_river];
+            }
+            let avg_freq = total_freq / oop_cards_len_river as f32;
+            if avg_freq > 0.01 {
+                println!("  {}. {:?}: {:.1}%", i + 1, action, avg_freq * 100.0);
+            }
+        }
+    }
+
+    print!("\nOOP action (1-{}): ", oop_actions_river.len());
+    io::stdout().flush()?;
+    let mut oop_river_choice = String::new();
+    io::stdin().read_line(&mut oop_river_choice)?;
+    let oop_river_action_idx: usize = oop_river_choice.trim().parse::<usize>()? - 1;
+
+    if oop_river_action_idx >= oop_actions_river.len() {
+        return Err("Invalid choice".into());
+    }
+
+    println!("OOP action: {:?}", oop_actions_river[oop_river_action_idx]);
+
+    // Navigate to IP's response
+    game_river.play(oop_river_action_idx);
+    game_river.cache_normalized_weights();
+
+    // Check if terminal (OOP bet and we need IP response)
+    if !game_river.is_terminal_node() {
+        let ip_actions_river = game_river.available_actions();
+        let ip_strategy_river = game_river.strategy();
+
+        println!("\nIP (BTN) strategy:");
+
+        if position == "IP" {
+            if let Some(idx) = ip_hand_idx_river {
+                println!("  Your hand: {}", hand);
+                for (i, action) in ip_actions_river.iter().enumerate() {
+                    let freq = ip_strategy_river[idx + i * ip_cards_len_river];
+                    if freq > 0.01 {
+                        println!("  {}. {:?}: {:.1}%", i + 1, action, freq * 100.0);
+                    }
+                }
+                let ip_equity_river_current = game_river.equity(1);
+                println!("  Equity: {:.1}%", ip_equity_river_current[idx] * 100.0);
+            } else {
+                println!("  ⚠️  Hand not in filtered range");
+                return Ok(());
+            }
+        } else {
+            // Show aggregated
+            for (i, action) in ip_actions_river.iter().enumerate() {
+                let mut total_freq = 0.0;
+                for hand_idx in 0..ip_cards_len_river {
+                    total_freq += ip_strategy_river[hand_idx + i * ip_cards_len_river];
+                }
+                let avg_freq = total_freq / ip_cards_len_river as f32;
+                if avg_freq > 0.01 {
+                    println!("  {}. {:?}: {:.1}%", i + 1, action, avg_freq * 100.0);
+                }
+            }
+        }
+
+        print!("\nIP action (1-{}): ", ip_actions_river.len());
+        io::stdout().flush()?;
+        let mut ip_river_choice = String::new();
+        io::stdin().read_line(&mut ip_river_choice)?;
+        let ip_river_action_idx: usize = ip_river_choice.trim().parse::<usize>()? - 1;
+
+        if ip_river_action_idx >= ip_actions_river.len() {
+            return Err("Invalid choice".into());
+        }
+
+        println!("IP action: {:?}", ip_actions_river[ip_river_action_idx]);
+
+        // Navigate to IP's action
+        game_river.play(ip_river_action_idx);
+        game_river.cache_normalized_weights();
+
+        // Check if OOP needs to respond (e.g., IP bet after OOP checked, or IP raised)
+        if !game_river.is_terminal_node() && game_river.current_player() == 0 {
+            let oop_response_actions_river = game_river.available_actions();
+            let oop_response_strategy_river = game_river.strategy();
+
+            println!("\nOOP (BB) response:");
+
+            if position == "OOP" {
+                if let Some(idx) = oop_hand_idx_river {
+                    println!("  Your hand: {}", hand);
+                    for (i, action) in oop_response_actions_river.iter().enumerate() {
+                        let freq = oop_response_strategy_river[idx + i * oop_cards_len_river];
+                        if freq > 0.01 {
+                            println!("  {}. {:?}: {:.1}%", i + 1, action, freq * 100.0);
+                        }
+                    }
+                    let oop_equity_river_current = game_river.equity(0);
+                    println!("  Equity: {:.1}%", oop_equity_river_current[idx] * 100.0);
+                } else {
+                    println!("  ⚠️  Hand not in filtered range");
+                    return Ok(());
+                }
+            } else {
+                // Show aggregated
+                for (i, action) in oop_response_actions_river.iter().enumerate() {
+                    let mut total_freq = 0.0;
+                    for hand_idx in 0..oop_cards_len_river {
+                        total_freq += oop_response_strategy_river[hand_idx + i * oop_cards_len_river];
+                    }
+                    let avg_freq = total_freq / oop_cards_len_river as f32;
+                    if avg_freq > 0.01 {
+                        println!("  {}. {:?}: {:.1}%", i + 1, action, avg_freq * 100.0);
+                    }
+                }
+            }
+
+            print!("\nOOP action (1-{}): ", oop_response_actions_river.len());
+            io::stdout().flush()?;
+            let mut oop_response_choice_river = String::new();
+            io::stdin().read_line(&mut oop_response_choice_river)?;
+            let oop_response_action_idx_river: usize = oop_response_choice_river.trim().parse::<usize>()? - 1;
+
+            if oop_response_action_idx_river >= oop_response_actions_river.len() {
+                return Err("Invalid choice".into());
+            }
+
+            println!("OOP action: {:?}", oop_response_actions_river[oop_response_action_idx_river]);
+        }
+    }
+
+    println!("\n=== Hand complete ===");
+
+    Ok(())
+}
+
+fn parse_action_string(action_str: &str) -> Action {
+    if action_str == "Check" {
+        Action::Check
+    } else if action_str == "Call" {
+        Action::Call
+    } else if action_str == "Fold" {
+        Action::Fold
+    } else if action_str.starts_with("Bet(") {
+        let size = action_str.trim_start_matches("Bet(").trim_end_matches(')').parse().unwrap_or(0);
+        Action::Bet(size)
+    } else if action_str.starts_with("Raise(") {
+        let size = action_str.trim_start_matches("Raise(").trim_end_matches(')').parse().unwrap_or(0);
+        Action::Raise(size)
+    } else if action_str.starts_with("AllIn(") {
+        let size = action_str.trim_start_matches("AllIn(").trim_end_matches(')').parse().unwrap_or(0);
+        Action::AllIn(size)
+    } else {
+        Action::Check // Default
+    }
+}
+
+fn action_sort_key(action: &Action) -> (i32, i32) {
+    // Returns (priority, bet_size) for sorting
+    // Lower priority comes first
+    match action {
+        Action::Fold => (0, 0),
+        Action::Check => (1, 0),
+        Action::Call => (1, 0),
+        Action::Bet(amount) => (2, *amount),
+        Action::Raise(amount) => (2, *amount),
+        Action::AllIn(amount) => (3, *amount),
+        Action::None => (4, 0),
+        Action::Chance(_) => (5, 0),
+    }
+}
+
+fn sort_actions_with_freq(actions: &[Action], frequencies: &[(usize, f32)]) -> Vec<(usize, Action, f32)> {
+    let mut result: Vec<(usize, Action, f32)> = frequencies.iter()
+        .map(|(idx, freq)| (*idx, actions[*idx].clone(), *freq))
+        .collect();
+
+    result.sort_by(|a, b| {
+        let key_a = action_sort_key(&a.1);
+        let key_b = action_sort_key(&b.1);
+        key_a.cmp(&key_b)
+    });
+
+    result
+}
+
+fn format_action_line(index: usize, action: &Action, freq: f32, is_max: bool) -> String {
+    let action_str = format!("{:?}", action);
+    let freq_str = format!("{:.1}%", freq * 100.0);
+
+    if is_max {
+        format!("  {}. \x1b[1m{}: {}\x1b[0m", index, action_str, freq_str)
+    } else {
+        format!("  {}. {}: {}", index, action_str, freq_str)
+    }
+}
+
+fn display_sorted_strategy(actions: &[Action], frequencies: &[f32], threshold: f32) {
+    let freqs_with_idx: Vec<(usize, f32)> = frequencies.iter().enumerate()
+        .filter(|(_, &f)| f > threshold)
+        .map(|(i, &f)| (i, f))
+        .collect();
+
+    if freqs_with_idx.is_empty() {
+        return;
+    }
+
+    let sorted = sort_actions_with_freq(actions, &freqs_with_idx);
+    let max_freq = sorted.iter().map(|(_, _, f)| f).fold(0.0_f32, |a, &b| a.max(b));
+
+    for (display_idx, (_, action, freq)) in sorted.iter().enumerate() {
+        let is_max = (freq - max_freq).abs() < 0.001;
+        println!("{}", format_action_line(display_idx + 1, action, *freq, is_max));
+    }
+}
+
+fn calculate_pot_stack(oop_action: &str, ip_action: &str, starting_pot: i32, starting_stack: i32) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+    // Check-check
+    if oop_action == "Check" && ip_action == "Check" {
+        return Ok((starting_pot, starting_stack));
+    }
+
+    // Check-bet (IP bets, need OOP response - simplified for now)
+    if oop_action == "Check" {
+        let bet_size = extract_bet_size(ip_action)?;
+        // Assume call for now
+        return Ok((starting_pot + bet_size * 2, starting_stack - bet_size));
+    }
+
+    // OOP bet - IP response
+    let bet_size = extract_bet_size(oop_action)?;
+
+    if ip_action.contains("Fold") {
+        return Err("Hand ended - cannot continue".into());
+    }
+
+    if ip_action.contains("Call") {
+        return Ok((starting_pot + bet_size * 2, starting_stack - bet_size));
+    }
+
+    if ip_action.contains("Raise") {
+        let raise_size = extract_bet_size(ip_action)?;
+        // Assume OOP calls for now
+        return Ok((starting_pot + raise_size * 2, starting_stack - raise_size));
+    }
+
+    Ok((starting_pot, starting_stack))
+}
+
+fn calculate_pot_stack_three_actions(
+    oop_action: &str,
+    ip_action: &str,
+    oop_response: &str,
+    starting_pot: i32,
+    starting_stack: i32,
+) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+    // OOP checked, IP bet, OOP responds
+    if oop_action == "Check" {
+        let ip_bet = extract_bet_size(ip_action)?;
+
+        if oop_response.contains("Fold") {
+            return Err("Hand ended - cannot continue".into());
+        } else if oop_response.contains("Call") {
+            return Ok((starting_pot + ip_bet * 2, starting_stack - ip_bet));
+        } else if oop_response.contains("Raise") {
+            let raise_size = extract_bet_size(oop_response)?;
+            // Assume IP calls the raise for now
+            return Ok((starting_pot + raise_size * 2, starting_stack - raise_size));
+        }
+    }
+
+    // OOP bet, IP raised, OOP responds
+    if oop_action.starts_with("Bet") && ip_action.contains("Raise") {
+        let raise_size = extract_bet_size(ip_action)?;
+
+        if oop_response.contains("Fold") {
+            return Err("Hand ended - cannot continue".into());
+        } else if oop_response.contains("Call") {
+            return Ok((starting_pot + raise_size * 2, starting_stack - raise_size));
+        }
+    }
+
+    // Default
+    Ok((starting_pot, starting_stack))
+}
+
+fn calculate_pot_stack_four_actions(
+    oop_action: &str,
+    ip_action: &str,
+    oop_response: &str,
+    ip_response: &str,
+    starting_pot: i32,
+    starting_stack: i32,
+) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+    // OOP checked, IP bet, OOP raised, IP responds
+    if oop_action == "Check" && ip_action.contains("Bet") && oop_response.contains("Raise") {
+        let raise_size = extract_bet_size(oop_response)?;
+
+        if ip_response.contains("Fold") {
+            return Err("Hand ended - cannot continue".into());
+        } else if ip_response.contains("Call") {
+            return Ok((starting_pot + raise_size * 2, starting_stack - raise_size));
+        } else if ip_response.contains("Raise") {
+            let reraise_size = extract_bet_size(ip_response)?;
+            // Assume OOP calls the reraise for now
+            return Ok((starting_pot + reraise_size * 2, starting_stack - reraise_size));
+        }
+    }
+
+    // OOP bet, IP raised, OOP reraised, IP responds
+    if oop_action.starts_with("Bet") && ip_action.contains("Raise") && oop_response.contains("Raise") {
+        let reraise_size = extract_bet_size(oop_response)?;
+
+        if ip_response.contains("Fold") {
+            return Err("Hand ended - cannot continue".into());
+        } else if ip_response.contains("Call") {
+            return Ok((starting_pot + reraise_size * 2, starting_stack - reraise_size));
+        }
+    }
+
+    // Default
+    Ok((starting_pot, starting_stack))
+}
+
+fn extract_bet_size(action: &str) -> Result<i32, Box<dyn std::error::Error>> {
+    // Extract number from action like "Bet(275)" or "Raise(825)"
+    if let Some(start) = action.find('(') {
+        if let Some(end) = action.find(')') {
+            let size_str = &action[start + 1..end];
+            if let Ok(size) = size_str.parse::<i32>() {
+                return Ok(size);
+            }
+        }
+    }
+    Err("Could not extract bet size".into())
+}

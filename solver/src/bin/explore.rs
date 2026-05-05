@@ -25,6 +25,27 @@ fn display_hand_matrix(hands: &[(u8, u8)], selected: Option<usize>) {
     println!();
 }
 
+fn format_action(action: &Action) -> String {
+    match action {
+        Action::Check => "Check".to_string(),
+        Action::Fold => "Fold".to_string(),
+        Action::Call => "Call".to_string(),
+        Action::Bet(amount) => {
+            let bet_f = *amount as f64 / 100.0;
+            format!("Bet ${:.2}", bet_f)
+        }
+        Action::Raise(amount) => {
+            let bet_f = *amount as f64 / 100.0;
+            format!("Raise ${:.2}", bet_f)
+        }
+        Action::AllIn(amount) => {
+            let bet_f = *amount as f64 / 100.0;
+            format!("All-In ${:.2}", bet_f)
+        }
+        _ => format!("{:?}", action),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔════════════════════════════════════════╗");
     println!("║   GTO Poker Solution Explorer v1.1    ║");
@@ -207,9 +228,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let equity = game.equity(player);
         let current_player = game.current_player();
 
-        println!("\nYour hand: {} {} (Player {})", card_to_string(c1), card_to_string(c2), player);
+        println!("\nYour hand: {} {} ({})",
+            card_to_string(c1), card_to_string(c2),
+            if player == 0 { "OOP/BB" } else { "IP/BTN" });
         println!("  Equity: {:.1}%", equity[hand_idx] * 100.0);
-        println!("  [Debug: hand_idx={}, equity_len={}, player={}]", hand_idx, equity.len(), player);
         println!("  To act: {}", if current_player == 0 { "OOP" } else { "IP" });
 
         if current_player == player {
@@ -217,18 +239,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\n📊 GTO Strategy for your hand:");
 
             let hand_cards = if is_oop { &oop_hands } else { &ip_hands };
+
+            // Find max frequency
+            let mut max_freq = 0.0_f32;
+            for action_idx in 0..actions.len() {
+                let freq = strategy[hand_idx + action_idx * hand_cards.len()];
+                if freq > max_freq {
+                    max_freq = freq;
+                }
+            }
+
+            // Display all actions
             for (action_idx, action) in actions.iter().enumerate() {
                 let freq = strategy[hand_idx + action_idx * hand_cards.len()];
-                if freq > 0.01 {
-                    println!("    {:2}. {:?} - {:.1}%",
-                        action_idx + 1, action, freq * 100.0);
+                let action_str = format_action(action);
+                let freq_pct = freq * 100.0;
+
+                if freq >= max_freq && max_freq > 0.0 {
+                    // Bold the highest frequency (ANSI escape code)
+                    println!("    {:2}. \x1b[1m{} - {:.1}%\x1b[0m",
+                        action_idx + 1, action_str, freq_pct);
+                } else {
+                    println!("    {:2}. {} - {:.1}%",
+                        action_idx + 1, action_str, freq_pct);
                 }
             }
         } else {
             // Villain's turn
             println!("\n🎲 Villain's turn - choose their action:");
+
             for (action_idx, action) in actions.iter().enumerate() {
-                println!("    {:2}. {:?}", action_idx + 1, action);
+                let action_str = format_action(action);
+                println!("    {:2}. {}", action_idx + 1, action_str);
             }
         }
 
