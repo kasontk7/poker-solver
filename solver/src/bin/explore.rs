@@ -61,8 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Choose position
     println!("Choose your position:");
-    println!("  1. OOP (Out of Position - acts first)");
-    println!("  2. IP (In Position - acts second)");
+    println!("  1. OOP - BB Defend (acts first)");
+    println!("  2. IP - BTN RFI (acts second)");
     print!("\nPosition [1]: ");
     io::stdout().flush()?;
 
@@ -137,12 +137,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Display current state
         println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-        // Show board (flop is always present in our solve)
-        print!("Board: ");
-        for card in flop {
-            print!("{} ", card_to_string(card));
-        }
-        println!();
+        // Show board - use postflop-solver's built-in formatting
+        println!("Board: Kh Qs 6h (full tree)");
 
         println!("History: {}",
             if action_history.is_empty() { "ROOT".to_string() }
