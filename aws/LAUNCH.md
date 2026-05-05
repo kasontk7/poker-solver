@@ -1,5 +1,10 @@
 # EC2 Launch Guide for v1.1
 
+**Updated bet sizes:**
+- Flop: 50%, 100% | Raises: 3x, 5x
+- Turn: 50%, 100%, 150% | Raises: 3x, 5x  
+- River: 75%, 150%, all-in | Raises: 3x, 5x
+
 ## Quick Start (3 steps)
 
 ### Step 1: Launch EC2 Instance
@@ -63,7 +68,7 @@ cd poker-solver && \
 time ./solver/target/release/poker_solver | tee solve_output.txt
 ```
 
-**Expected time:** ~7-40 minutes for the solve
+**Expected time:** ~2-6 hours for the solve (larger tree with more bet sizes)
 
 ---
 
@@ -77,7 +82,7 @@ mkdir -p ~/personal/poker-solver/solutions
 
 # Download solution file
 scp -i ~/.ssh/poker-solver-key.pem \
-  ec2-user@<PUBLIC_IP>:~/poker-solver/solutions/v1.0_KhQs6h.bin \
+  ec2-user@<PUBLIC_IP>:~/poker-solver/solutions/v1.1_KhQs6h.bin \
   ~/personal/poker-solver/solutions/
 
 # Terminate instance
@@ -88,10 +93,10 @@ aws ec2 terminate-instances --instance-ids <INSTANCE_ID> --profile poker
 
 ## Cost Estimate
 
-- **Instance:** r6a.2xlarge @ $0.504/hour
-- **Time:** ~7-40 minutes
-- **Cost:** ~$0.06-0.35 per solve
-- **Data transfer:** ~1-2 GB @ $0/GB (under 100GB free tier)
+- **Instance:** r6a.2xlarge @ $0.504/hour (8 vCPU, 64 GB RAM)
+- **Time:** ~2-6 hours
+- **Cost:** ~$1.00-3.00 per solve
+- **Data transfer:** ~3-8 GB @ $0/GB (under 100GB free tier)
 
 ---
 

@@ -7,7 +7,7 @@ fn card_to_string(card: u8) -> String {
         r => (b'2' + r) as char,
     };
     let suit = match card % 4 {
-        0 => 's', 1 => 'h', 2 => 'd', 3 => 'c',
+        0 => 'c', 1 => 'd', 2 => 'h', 3 => 's',
         _ => '?',
     };
     format!("{}{}", rank, suit)
@@ -168,8 +168,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let equity = game.equity(player);
             let ev = game.expected_values(player);
 
-            println!("\nYour hand: {} {}", card_to_string(c1), card_to_string(c2));
+            println!("\nYour hand: {} {} (Player {})", card_to_string(c1), card_to_string(c2), player);
             println!("  Equity: {:.1}%", equity[hand_idx] * 100.0);
+            println!("  [Debug: hand_idx={}, equity_len={}, player={}]", hand_idx, equity.len(), player);
             println!("  EV: ${:.2}", ev[hand_idx] / 100.0);
 
             println!("\nEnd of tree. Type 'r' to restart or 'q' to quit.");
@@ -206,8 +207,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let equity = game.equity(player);
         let current_player = game.current_player();
 
-        println!("\nYour hand: {} {}", card_to_string(c1), card_to_string(c2));
+        println!("\nYour hand: {} {} (Player {})", card_to_string(c1), card_to_string(c2), player);
         println!("  Equity: {:.1}%", equity[hand_idx] * 100.0);
+        println!("  [Debug: hand_idx={}, equity_len={}, player={}]", hand_idx, equity.len(), player);
         println!("  To act: {}", if current_player == 0 { "OOP" } else { "IP" });
 
         if current_player == player {

@@ -1,5 +1,6 @@
 use postflop_solver::*;
 use std::fs;
+use std::time::Instant;
 
 fn load_range_from_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(path)?;
@@ -35,6 +36,8 @@ fn load_range_from_file(path: &str) -> Result<String, Box<dyn std::error::Error>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let total_start = Instant::now();
+
     println!("=== Poker Solver v1.1 ===");
     println!("Scenario: BTN RFI vs BB call");
     println!("Board: KhQs6h (full tree - all turns/rivers for v1.1)");
@@ -64,12 +67,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Bet sizes configuration
-    // Flop: 50%, 100%, 2.5x raise
-    // Turn: 50%, 125%, 2.5x raise
-    // River: 75%, all-in, 2.5x raise
-    let flop_bet_sizes = BetSizeOptions::try_from(("50%, 100%", "2.5x"))?;
-    let turn_bet_sizes = BetSizeOptions::try_from(("50%, 125%", "2.5x"))?;
-    let river_bet_sizes = BetSizeOptions::try_from(("75%, a", "2.5x"))?;
+    // Flop: 50%, 100%, 3x and 5x raises
+    // Turn: 50%, 100%, 150%, 3x and 5x raises
+    // River: 75%, 150%, all-in, 3x and 5x raises
+    let flop_bet_sizes = BetSizeOptions::try_from(("50%, 100%", "3x, 5x"))?;
+    let turn_bet_sizes = BetSizeOptions::try_from(("50%, 100%, 150%", "3x, 5x"))?;
+    let river_bet_sizes = BetSizeOptions::try_from(("75%, 150%, a", "3x, 5x"))?;
 
     // Donk bet sizes: 50%
     let donk_sizes = DonkSizeOptions::try_from("50%")?;
@@ -124,10 +127,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Target exploitability: {:.2} cents (~1% of pot)", target_exploitability);
     println!();
 
+    let solve_start = Instant::now();
     let exploitability = solve(&mut game, max_iterations, target_exploitability, true);
+    let solve_duration = solve_start.elapsed();
+
     println!();
     println!("✓ Solve complete!");
     println!("  Final exploitability: {:.2} cents", exploitability);
+    println!("  Solve time: {:.2} minutes ({:.1} hours)",
+        solve_duration.as_secs_f64() / 60.0,
+        solve_duration.as_secs_f64() / 3600.0);
     println!();
 
     // Save the solved game tree
@@ -140,8 +149,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Saved to: {}", output_path);
     println!("  File size: {:.2} MB", file_size as f64 / (1024.0 * 1024.0));
 
+    let total_duration = total_start.elapsed();
+
     println!();
     println!("=== Done! ===");
+    println!("Total time: {:.2} minutes ({:.1} hours)",
+        total_duration.as_secs_f64() / 60.0,
+        total_duration.as_secs_f64() / 3600.0);
 
     Ok(())
 }

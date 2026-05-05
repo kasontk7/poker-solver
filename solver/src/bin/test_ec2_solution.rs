@@ -10,10 +10,10 @@ fn card_to_string(card: u8) -> String {
         r => (b'2' + r) as char,
     };
     let suit = match card % 4 {
-        0 => 's',
-        1 => 'h',
-        2 => 'd',
-        3 => 'c',
+        0 => 'c',
+        1 => 'd',
+        2 => 'h',
+        3 => 's',
         _ => '?',
     };
     format!("{}{}", rank, suit)
@@ -22,7 +22,7 @@ fn card_to_string(card: u8) -> String {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Testing EC2 Solution ===\n");
 
-    let bin_path = "../solutions/v1.0_KhQs6h.bin";
+    let bin_path = "../solutions/v1.1_KhQs6h.bin";
     println!("Loading {}...", bin_path);
 
     let (mut game, memo): (PostFlopGame, String) = load_data_from_file(bin_path, None)?;
