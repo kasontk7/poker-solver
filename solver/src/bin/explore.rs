@@ -97,13 +97,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Navigation loop
     game.back_to_root();
     let mut action_history: Vec<String> = Vec::new();
+    let mut dealt_cards: Vec<String> = Vec::new();
 
     loop {
-        // Handle chance nodes (turn/river dealing) automatically
-        while game.is_chance_node() {
-            // Deal first available card
-            game.play(0);
-            action_history.push(format!("[Card dealt]"));
+        // Handle chance nodes (turn/river dealing) - let user choose card
+        if game.is_chance_node() {
+            let num_cards = game.num_private_hands(0);
+
+            println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            print!("Board: Kh Qs 6h");
+            if !dealt_cards.is_empty() {
+                print!(" | {}", dealt_cards.join(" | "));
+            }
+            println!();
+            println!("History: {}",
+                if action_history.is_empty() { "ROOT".to_string() }
+                else { action_history.join(" → ") }
+            );
+            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+            println!("\n🎲 {} to be dealt - choose a card:",
+                if dealt_cards.is_empty() { "TURN" } else { "RIVER" }
+            );
+
+            // Show some sample cards (we can't enumerate all 44+ cards easily)
+            println!("  Enter card (e.g., '9d', '3c', 'Ah', 'Ts')");
+            println!("  Or 'r' restart | 'q' quit");
+            print!("\nCard: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+
+            match input {
+                "q" | "quit" => {
+                    println!("\nGoodbye!");
+                    return Ok(());
+                }
+                "r" | "restart" => {
+                    game.back_to_root();
+                    action_history.clear();
+                    dealt_cards.clear();
+                    continue;
+                }
+                _ => {
+                    // Try to parse the card
+                    if let Ok(card) = card_from_str(input) {
+                        // Find which action index corresponds to this card
+                        // Action index in chance node = card value
+                        dealt_cards.push(input.to_uppercase());
+                        action_history.push(format!("Deal {}", input.to_uppercase()));
+                        game.play(card as usize);
+                        continue;
+                    } else {
+                        println!("Invalid card. Try again (format: '9d', 'Kh', etc.)");
+                        continue;
+                    }
+                }
+            }
         }
 
         game.cache_normalized_weights();
@@ -137,8 +189,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Display current state
         println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-        // Show board - use postflop-solver's built-in formatting
-        println!("Board: Kh Qs 6h (full tree)");
+        // Show board with dealt cards
+        print!("Board: Kh Qs 6h");
+        if !dealt_cards.is_empty() {
+            print!(" | {}", dealt_cards.join(" | "));
+        }
+        println!();
 
         println!("History: {}",
             if action_history.is_empty() { "ROOT".to_string() }
