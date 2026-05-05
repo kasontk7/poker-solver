@@ -72,10 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let player = if is_oop { 0 } else { 1 };
     let hero_hands = if is_oop { &oop_hands } else { &ip_hands };
 
-    println!("\n✓ Playing as {} ({} hands)\n",
-        if is_oop { "OOP" } else { "IP" },
-        hero_hands.len()
-    );
+    let position_desc = if is_oop { "OOP (BB - Defend)" } else { "IP (BTN - RFI)" };
+    println!("\n✓ Playing as {} ({} hands)\n", position_desc, hero_hands.len());
 
     // Choose hand
     display_hand_matrix(hero_hands, None);
@@ -93,11 +91,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (c1, c2) = hero_hands[hand_idx];
     println!("\n✓ Selected: {} {}\n", card_to_string(c1), card_to_string(c2));
 
+    // Get board cards from config
+    let flop = game.card_config().flop;
+
     // Navigation loop
     game.back_to_root();
     let mut action_history: Vec<String> = Vec::new();
 
     loop {
+        // Handle chance nodes (turn/river dealing) automatically
+        while game.is_chance_node() {
+            // Deal first available card
+            game.play(0);
+            action_history.push(format!("[Card dealt]"));
+        }
+
         game.cache_normalized_weights();
         let actions = game.available_actions();
 
@@ -128,6 +136,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Display current state
         println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        // Show board (flop is always present in our solve)
+        print!("Board: ");
+        for card in flop {
+            print!("{} ", card_to_string(card));
+        }
+        println!();
+
         println!("History: {}",
             if action_history.is_empty() { "ROOT".to_string() }
             else { action_history.join(" → ") }
